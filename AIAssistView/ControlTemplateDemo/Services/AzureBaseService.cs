@@ -1,5 +1,7 @@
-﻿using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.SemanticKernel;
+﻿using Azure;
+using Azure.AI.OpenAI;
+using Microsoft.Extensions.AI;
+using OpenAI.Images;
 
 namespace ControlTemplate
 {
@@ -27,20 +29,16 @@ namespace ControlTemplate
         /// </summary>
         private const string key = "API key";
 
-        /// <summary>
-        /// The chat completion service
-        /// </summary>
-        private IChatCompletionService? chatCompletions;
 
         /// <summary>
         /// The kernal
         /// </summary>
-        private Kernel? kernel;
+        private IChatClient? client;
 
         /// <summary>
         /// The chat histroy
         /// </summary>
-        private ChatHistory? chatHistory;
+        private string? chatHistory;
 
         private static bool isCredentialValid = false;
 
@@ -58,7 +56,7 @@ namespace ControlTemplate
         #region Properties
 
 
-        public ChatHistory? ChatHistory
+        public string? ChatHistory
         {
             get
             {
@@ -70,33 +68,21 @@ namespace ControlTemplate
             }
         }
 
-        public IChatCompletionService? ChatCompletions
-        {
-            get
-            {
-                return chatCompletions;
-            }
-            set
-            {
-                chatCompletions = value;
-            }
-        }
 
         /// <summary>
         /// Gets or sets a value indicating the kernal object
         /// </summary>
-        public Kernel? Kernel
+        public IChatClient? Client
         {
             get
             {
-                return kernel;
+                return client;
             }
             set
             {
-                kernel = value;
+                client = value;
             }
         }
-
         /// <summary>
         /// Gets or Set a value indicating whether an credentials are valid or not.
         /// Returns <c>true</c> if the credentials are valid; otherwise, <c>false</c>.
@@ -146,11 +132,11 @@ namespace ControlTemplate
             }
             try
             {
-                if (ChatHistory != null && chatCompletions != null)
+                // Initialize the OpenAI client for creadential check.
+                if (Client != null)
                 {
                     // test the semantic kernal with message.
-                    ChatHistory.AddSystemMessage("Hello, Test Check");
-                    await chatCompletions.GetChatMessageContentAsync(chatHistory: ChatHistory, kernel: kernel);
+                    await Client.GetResponseAsync("Hello, Test Check");
                 }
             }
             catch (Exception)
@@ -168,10 +154,11 @@ namespace ControlTemplate
         /// </summary>
         private async void ShowAlertAsync()
         {
-            if (Application.Current?.MainPage != null && !IsCredentialValid)
+            var page = Application.Current?.Windows.FirstOrDefault()?.Page;
+            if (page != null && !IsCredentialValid)
             {
                 isAlreadyValidated = true;
-                await Application.Current.MainPage.DisplayAlert("Alert", "The Azure API key or endpoint is missing or incorrect. Please verify your credentials. You can also continue with the offline data.", "OK");
+                await page.DisplayAlertAsync("Alert", "The Azure API key or endpoint is missing or incorrect. Please verify your credentials. You can also continue with the offline data.", "OK");
             }
         }
 
@@ -183,15 +170,23 @@ namespace ControlTemplate
         /// </summary>
         private void GetAzureOpenAIKernal()
         {
-            // Create the chat history
-            chatHistory = new ChatHistory();
-            var builder = Kernel.CreateBuilder().AddAzureOpenAIChatCompletion(deploymentName, endpoint, key);
+            try
+            {
+                var client = new AzureOpenAIClient(
+                    new Uri(endpoint),
+                    new AzureKeyCredential(key)
+                )
+                .GetChatClient(deploymentName)
+                .AsIChatClient();
 
-            // Get the kernal from build
-            kernel = builder.Build();
+                this.client = client;
 
-            //Get the chat completions from kernal
-            chatCompletions = kernel.GetRequiredService<IChatCompletionService>();
+            }
+            catch (Exception)
+            {
+                ShowAlertAsync();
+            }
+
         }
         #endregion
 
@@ -226,29 +221,21 @@ namespace ControlTemplate
 
         public void InitializeClient()
         {
-            if (IsCredentialValid && ChatHistory != null)
+            if (IsCredentialValid && Client != null)
             {
-                ChatHistory.Clear();
-                ChatHistory.AddSystemMessage("You are a helpful, intelligent and conversational assistant that can assit with a wide variety of topics.");
+                ChatHistory = ChatHistory + "You are a helpful, intelligent and conversational assistant that can assit with a wide variety of topics.";
             }
         }
 
         internal async Task<string> GetResultsFromAI(string userPrompt, string userAIPrompt)
         {
-            if (ChatCompletions != null && ChatHistory != null)
+            if (IsCredentialValid && Client != null)
             {
                 try
                 {
-                    if (ChatHistory.Count > 5)
-                    {
-                        //Remove the message history to avoid exceeding the token limit
-                        ChatHistory.RemoveRange(0, 2);
-                    }
-
-                    ChatHistory.AddUserMessage(userAIPrompt);
-
-                    var response = await ChatCompletions.GetChatMessageContentAsync(chatHistory: ChatHistory, kernel: Kernel);
-                    return response.ToString();
+                    ChatHistory = ChatHistory + userAIPrompt;
+                    var chatresponse = await Client.GetResponseAsync(userPrompt);
+                    return chatresponse.ToString();
                 }
                 catch
                 {
